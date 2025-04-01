@@ -17,8 +17,10 @@ const LINE_GROUP_ID = process.env.LINE_GROUP_ID;
 
 // 📨 LINE → Teams：接收 LINE webhook 並轉發訊息到 Teams
 app.post("/webhook/line", async (req, res) => {
-  // ✅ LINE 要求 webhook 必須快速回傳 200
-  res.sendStatus(200);
+  console.log("📥 收到 LINE webhook 請求！");
+  console.log("Body:", JSON.stringify(req.body));
+
+  res.sendStatus(200); // ✅ 立即回應 LINE
 
   try {
     const events = req.body.events;
@@ -38,17 +40,25 @@ app.post("/webhook/line", async (req, res) => {
   }
 });
 
-// 📤 Teams → LINE：接收 Teams webhook 並轉發訊息到 LINE
+// 📤 Teams → LINE：接收 Teams webhook 並轉發訊息到 LINE（支援 text, message, attachments）
 app.post("/webhook/teams", async (req, res) => {
   try {
-    const message = req.body.text || req.body.message || "(空訊息)";
+    const { text, message, attachments } = req.body;
+
+    // 彈性組合訊息內容
+    let fullMessage = "📢 來自 Teams 的訊息：\n";
+    if (text) fullMessage += `${text}\n`;
+    if (message) fullMessage += `${message}\n`;
+    if (attachments && Array.isArray(attachments)) {
+      fullMessage += attachments.map((att, idx) => `📎 附件 ${idx + 1}: ${att}`).join("\n") + "\n";
+    }
 
     const linePayload = {
       to: LINE_GROUP_ID,
       messages: [
         {
           type: "text",
-          text: `📢 來自 Teams 的訊息：\n${message}`,
+          text: fullMessage.trim(),
         },
       ],
     };
