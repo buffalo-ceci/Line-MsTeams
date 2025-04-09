@@ -3,6 +3,7 @@
 const express = require("express");
 const axios = require("axios");
 require("dotenv").config();
+const { htmlToText } = require("html-to-text");
 
 const app = express();
 app.use(express.json());
@@ -44,14 +45,14 @@ validateEnvVars();
 
 // 🔍 根據 groupId 找出對應 config
 function findConfigByGroupId(groupId) {
-  return channelPairs.find((config) => config.groupIds.includes(groupId)) || channelPairs[0]; // fallback
+  return channelPairs.find((config) => config.groupIds.includes(groupId));
 }
 
 // 🧠 從 LINE 使用者來源抓取名稱
 async function getUsername(source) {
   const config = findConfigByGroupId(source.groupId);
   const headers = {
-    Authorization: `Bearer ${config.token}`,
+    Authorization: `Bearer ${config?.token}`,
   };
 
   try {
@@ -73,7 +74,7 @@ async function getUsername(source) {
   }
 }
 
-// 🔁 LINE ➜ 對應 Teams webhook
+// 🔁 LINE ➜ 對應 Teams webhook（依 groupId 決定）
 app.post("/webhook/line", async (req, res) => {
   console.log("📥 收到 LINE webhook 請求！");
   res.sendStatus(200);
@@ -84,15 +85,24 @@ app.post("/webhook/line", async (req, res) => {
     for (const event of events) {
       if (event.type === "message" && event.message.type === "text") {
         const userText = event.message.text;
-        const username = await getUsername(event.source);
+        const groupId = event.source.groupId;
+        const config = findConfigByGroupId(groupId);
 
-        const config = findConfigByGroupId(event.source.groupId);
+        if (!config) {
+          console.warn(`⚠️ 未知的 LINE 群組 ID：${groupId}，無法轉發`);
+          continue;
+        }
+
+        const username = await getUsername(event.source);
         const teamsMessage = {
-          text: `📩 來自 LINE ${username} 的訊息：${userText}`,
+          text: `📩 來自 LINE ${username} 的訊息：\n${userText}`,
         };
 
+        const channelIndex = channelPairs.findIndex(cfg => cfg.groupIds.includes(groupId)) + 1;
+        console.log(`🔁 來自群組 ${groupId} ➜ 對應 Teams${channelIndex}`);
+
         await axios.post(config.teamsWebhook, teamsMessage);
-        console.log(`✅ 已將訊息轉發到 Teams：${teamsMessage.text}`);
+        console.log(`✅ 已將訊息轉發到 Teams${channelIndex}：${teamsMessage.text}`);
       }
     }
   } catch (error) {
@@ -102,19 +112,75 @@ app.post("/webhook/line", async (req, res) => {
 
 // 🔁 Teams ➜ 對應 LINE 群組（根據指定 webhook URL）
 app.post("/webhook/teams/:channel", async (req, res) => {
-  const channel = req.params.channel; // e.g. 1 或 2
+  const channel = req.params.channel;
   const config = channelPairs[channel - 1];
-
   if (!config) return res.status(400).send("Invalid channel");
 
   try {
-    const { text = "", message = "", attachments = [], stickerId, packageId } = req.body || {};
+    let { text = "", message = "", attachments = [], stickerId, packageId } = req.body || {};
     console.log(`📥 收到 Teams${channel} webhook：`, req.body);
 
-    const lineMessages = [];
+    if (text.includes("<")) {
+      text = htmlToText(text, {
+        wordwrap: false,
+        selectors: [{ selector: 'a', format: 'inline' }],
+      });
+    }
 
-    if (text.trim()) lineMessages.push({ type: "text", text: text.trim() });
-    if (message.trim()) lineMessages.push({ type: "text", text: message.trim() });
+    text = text.replace(/ALL/gi, "").replace(/\n{2,}/g, "\n").trim();
+    const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+
+    let username = "未知使用者";
+    let subject = "無主旨";
+    let body = "";
+    let fileUrl = "";
+    let fileName = "";
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (/^RT\s+/.test(line)) {
+        username = line.replace(/^RT\s+/, "").trim();
+        continue;
+      }
+
+      if (!subject || subject === "無主旨") {
+        if (/簡報|說明|報告|監測/i.test(line)) {
+          subject = line;
+          continue;
+        }
+      }
+
+      if (!fileUrl && line.match(/\.pdf\s*\((https?:\/\/.*?)\)/i)) {
+        const match = line.match(/(.*?)\s*\((https?:\/\/.*?)\)/);
+        if (match) {
+          fileName = match[1].trim();
+          fileUrl = match[2].trim();
+          continue;
+        }
+      }
+
+      if (!body) {
+        body = line;
+      }
+    }
+
+    if (!fileUrl) {
+      for (const url of attachments) {
+        if (typeof url === "string" && url.toLowerCase().endsWith(".pdf")) {
+          fileUrl = url;
+          fileName = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "附件.pdf");
+          break;
+        }
+      }
+    }
+
+    let finalText = `📢 RT ${username}\n主旨：${subject}\n內文："${body || ""}"`;
+    if (fileUrl && fileName) {
+      finalText += `\n\n📎 檔案：${fileName}\n🔗 ${fileUrl}`;
+    }
+
+    const lineMessages = [{ type: "text", text: finalText }];
 
     if (stickerId && packageId) {
       lineMessages.push({
@@ -122,21 +188,6 @@ app.post("/webhook/teams/:channel", async (req, res) => {
         packageId: String(packageId),
         stickerId: String(stickerId),
       });
-    }
-
-    for (const url of attachments) {
-      const lowerUrl = typeof url === "string" ? url.toLowerCase() : "";
-      if (lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg") || lowerUrl.endsWith(".png")) {
-        lineMessages.push({ type: "image", originalContentUrl: url, previewImageUrl: url });
-      } else if (lowerUrl.endsWith(".mp4")) {
-        lineMessages.push({ type: "video", originalContentUrl: url, previewImageUrl: url });
-      } else if (url) {
-        lineMessages.push({ type: "text", text: `📎 附件：${url}` });
-      }
-    }
-
-    if (lineMessages.length === 0) {
-      lineMessages.push({ type: "text", text: "⚠️ 收到 Teams 空訊息。" });
     }
 
     for (const groupId of config.groupIds) {
@@ -166,4 +217,9 @@ app.post("/webhook/teams/:channel", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Webhook server 已啟動：http://localhost:${PORT}`);
+  console.log("📊 啟用的 groupId ➜ Teams 對應如下：");
+  channelPairs.forEach((pair, idx) => {
+    console.log(`Teams${idx + 1}:`);
+    pair.groupIds.forEach(id => console.log(`  - ${id}`));
+  });
 });
