@@ -204,7 +204,8 @@ app.post("/webhook/teams/:channel", async (req, res) => {
         );
         console.log(`✅ 發送到 LINE 群組：${groupId}`);
       } catch (err) {
-        console.error(`❌ 傳送到 ${groupId} 失敗：`, err.response?.data || err.message);
+        const errorData = err.response?.data || err.message;
+        console.error(`❌ 傳送到 ${groupId} 失敗：\n`, JSON.stringify(errorData, null, 2));
       }
     }
 
