@@ -12,8 +12,8 @@
 
 ## 📁 專案結構
 ```
-MRT-GitHub-Demo/
-├── webhook-bridge/             # Webhook server 程式碼
+Line-MsTeams/
+├── webhook/             # Webhook server 程式碼
 │   └── index.js
 ├── .env                        # 環境變數（請依照 .env.example 建立）
 ├── .env.example                # 環境變數範例
@@ -24,8 +24,8 @@ MRT-GitHub-Demo/
 
 ## ⚙️ 安裝與執行
 ```bash
-git clone https://github.com/buffalo-ceci/MRT-GitHub-Demo.git
-cd MRT-GitHub-Demo/webhook-bridge
+git clone https://github.com/buffalo-ceci/Line-MsTeams
+cd Line-MsTeams/webhook
 npm install
 cp .env.example .env
 # 修改 .env 為你的實際資料
