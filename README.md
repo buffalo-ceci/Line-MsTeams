@@ -13,7 +13,7 @@
 ## 📁 專案結構
 ```
 Line-MsTeams/
-├── webhook/             # Webhook server 程式碼
+├── web-hook/             # Webhook server 程式碼
 │   └── index.js
 ├── .env                        # 環境變數（請依照 .env.example 建立）
 ├── .env.example                # 環境變數範例
@@ -25,7 +25,7 @@ Line-MsTeams/
 ## ⚙️ 安裝與執行
 ```bash
 git clone https://github.com/buffalo-ceci/Line-MsTeams
-cd Line-MsTeams/webhook
+cd Line-MsTeams/web-hook
 npm install
 cp .env.example .env
 # 修改 .env 為你的實際資料
